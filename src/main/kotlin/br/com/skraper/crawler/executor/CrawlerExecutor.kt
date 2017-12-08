@@ -1,8 +1,8 @@
-package br.com.gustare.crawler.executor
+package br.com.skraper.crawler.executor
 
-import br.com.gustare.crawler.adapters.Crawler
-import br.com.gustare.crawler.adapters.CrawlerContext
-import br.com.gustare.crawler.adapters.ParseResult
+import br.com.skraper.crawler.adapters.Crawler
+import br.com.skraper.crawler.adapters.CrawlerContext
+import br.com.skraper.crawler.adapters.ParseResult
 import kotlinx.coroutines.experimental.async
 import kotlinx.coroutines.experimental.channels.Channel
 import kotlinx.coroutines.experimental.channels.ReceiveChannel

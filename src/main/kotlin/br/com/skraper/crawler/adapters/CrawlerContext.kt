@@ -1,4 +1,4 @@
-package br.com.gustare.crawler.adapters
+package br.com.skraper.crawler.adapters
 
 import java.io.Closeable
 import java.util.concurrent.atomic.AtomicInteger

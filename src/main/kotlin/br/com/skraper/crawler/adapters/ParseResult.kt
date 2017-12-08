@@ -1,4 +1,4 @@
-package br.com.gustare.crawler.adapters
+package br.com.skraper.crawler.adapters
 
 sealed class ParseResult {
 
