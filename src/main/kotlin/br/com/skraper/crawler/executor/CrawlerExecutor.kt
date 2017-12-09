@@ -3,48 +3,57 @@ package br.com.skraper.crawler.executor
 import br.com.skraper.crawler.adapters.Crawler
 import br.com.skraper.crawler.adapters.CrawlerContext
 import br.com.skraper.crawler.adapters.ParseResult
+import br.com.skraper.requests.asyncResponse
 import com.github.kittinunf.fuel.Fuel
-import com.github.kittinunf.fuel.core.FuelError
-import com.github.kittinunf.fuel.core.Request
-import com.github.kittinunf.fuel.core.Response
-import com.github.kittinunf.result.Result
 import kotlinx.coroutines.experimental.CommonPool
+import kotlinx.coroutines.experimental.channels.ActorJob
 import kotlinx.coroutines.experimental.channels.Channel
 import kotlinx.coroutines.experimental.channels.ReceiveChannel
 import kotlinx.coroutines.experimental.delay
 import kotlinx.coroutines.experimental.launch
 import kotlinx.coroutines.experimental.runBlocking
-import kotlinx.coroutines.experimental.suspendCancellableCoroutine
 import org.jsoup.Jsoup
 import org.slf4j.LoggerFactory
 import java.io.Closeable
+import java.net.URL
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.system.measureTimeMillis
 
-class CrawlerExecutor(private val baseURL: String) {
-
+class CrawlerExecutor(
+        private val concurrency: Int = 10
+) {
     companion object {
         private val log = LoggerFactory.getLogger(CrawlerExecutor::class.java)!!
-        private val CONCURRENCY = 20
     }
 
-    fun start(startEndpoint: String, crawler: Crawler) = runBlocking {
+    private val processors = hashMapOf<Class<*>, ActorJob<Any>>()
+
+    @Suppress("UNCHECKED_CAST")
+    fun <T> registerProcessor(clazz: Class<T>, actorJob: ActorJob<T>) {
+        processors[clazz] = actorJob as ActorJob<Any>
+    }
+
+    fun start(startURL: String, crawler: Crawler) = runBlocking {
         val time = measureTimeMillis {
 
-            val documentChannel = Channel<CrawlerContext>(Channel.UNLIMITED)
+            val url = URL(startURL)
+            val host = "${url.protocol}://${url.host}"
 
-            repeat(CONCURRENCY) {
-                processDocument(documentChannel)
+            val ctxChannel = Channel<CrawlerContext>(Channel.UNLIMITED)
+
+            repeat(concurrency) {
+                processDocument(ctxChannel)
             }
 
             val tasks = AtomicInteger(0)
-            documentChannel.send(CrawlerContext(crawler, "$baseURL$startEndpoint", tasks))
+            ctxChannel.send(CrawlerContext(host, crawler, startURL, tasks))
 
             while (tasks.get() != 0) {
                 delay(1, TimeUnit.SECONDS)
             }
-            documentChannel.close()
+            closeProcessors()
+            ctxChannel.close()
         }
         log.info("Crawling ended -> $time")
     }
@@ -64,10 +73,12 @@ class CrawlerExecutor(private val baseURL: String) {
                     is ParseResult.NextPage -> {
                         log.info("Next URL -> ${parseResult.nextURL}")
 
-                        ctxChannel.send(ctx.copy(crawler = parseResult.crawler, documentURL = "$baseURL${parseResult.nextURL}"))
+                        ctxChannel.send(ctx.copy(crawler = parseResult.crawler, documentURL = "${ctx.host}${parseResult.nextURL}"))
                     }
                     is ParseResult.CrawlingItem<*> -> {
                         log.info("result -> $parseResult")
+
+                        processors[parseResult.item!!::class.java]?.send(parseResult.item)
                     }
                 }
             }
@@ -80,14 +91,12 @@ class CrawlerExecutor(private val baseURL: String) {
         }
     }
 
-    private suspend fun Request.asyncResponse(): Triple<Request, Response, Result<ByteArray, FuelError>> = suspendCancellableCoroutine { cont ->
-        response { request, response, result ->
-            cont.resume(Triple(request, response, result))
-            cont.invokeOnCompletion {
-                if (cont.isCancelled) {
-                    request.cancel()
-                }
-            }
+    private suspend fun closeProcessors() {
+        processors.values.map {
+            it.close()
+            it
+        }.forEach {
+            it.join()
         }
     }
 
