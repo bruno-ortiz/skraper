@@ -3,13 +3,18 @@ package br.com.skraper.crawler.executor
 import br.com.skraper.crawler.adapters.Crawler
 import br.com.skraper.crawler.adapters.CrawlerContext
 import br.com.skraper.crawler.adapters.ParseResult
-import kotlinx.coroutines.experimental.async
+import com.github.kittinunf.fuel.Fuel
+import com.github.kittinunf.fuel.core.FuelError
+import com.github.kittinunf.fuel.core.Request
+import com.github.kittinunf.fuel.core.Response
+import com.github.kittinunf.result.Result
+import kotlinx.coroutines.experimental.CommonPool
 import kotlinx.coroutines.experimental.channels.Channel
 import kotlinx.coroutines.experimental.channels.ReceiveChannel
 import kotlinx.coroutines.experimental.delay
 import kotlinx.coroutines.experimental.launch
-import kotlinx.coroutines.experimental.newFixedThreadPoolContext
 import kotlinx.coroutines.experimental.runBlocking
+import kotlinx.coroutines.experimental.suspendCancellableCoroutine
 import org.jsoup.Jsoup
 import org.slf4j.LoggerFactory
 import java.io.Closeable
@@ -22,7 +27,6 @@ class CrawlerExecutor(private val baseURL: String) {
     companion object {
         private val log = LoggerFactory.getLogger(CrawlerExecutor::class.java)!!
         private val CONCURRENCY = 20
-        private val coroutinesPool = newFixedThreadPoolContext(10, "Crawler Pool")
     }
 
     fun start(startEndpoint: String, crawler: Crawler) = runBlocking {
@@ -45,13 +49,15 @@ class CrawlerExecutor(private val baseURL: String) {
         log.info("Crawling ended -> $time")
     }
 
-    private fun processDocument(ctxChannel: Channel<CrawlerContext>) = launch(coroutinesPool) {
+    private fun processDocument(ctxChannel: Channel<CrawlerContext>) = launch(CommonPool) {
         ctxChannel.consumeAndCloseEach { ctx ->
-            val doc = loadDocument(ctx.documentURL).await()
-
             log.info("Crawling page with ${ctx.crawler.name}")
 
-            val sequence = ctx.crawler.parse(doc)
+            val (_, response, _) = Fuel.get(ctx.documentURL).asyncResponse()
+
+            val content = response.data.toString(Charsets.UTF_8)
+
+            val sequence = ctx.crawler.parse(Jsoup.parse(content))
 
             for (parseResult in sequence) {
                 when (parseResult) {
@@ -68,11 +74,20 @@ class CrawlerExecutor(private val baseURL: String) {
         }
     }
 
-    private fun loadDocument(url: String) = async(coroutinesPool) { Jsoup.connect(url).get() }
-
     private inline suspend fun <T : Closeable> ReceiveChannel<T>.consumeAndCloseEach(action: (T) -> Unit) {
         for (element in this) {
             element.use { action(it) }
+        }
+    }
+
+    private suspend fun Request.asyncResponse(): Triple<Request, Response, Result<ByteArray, FuelError>> = suspendCancellableCoroutine { cont ->
+        response { request, response, result ->
+            cont.resume(Triple(request, response, result))
+            cont.invokeOnCompletion {
+                if (cont.isCancelled) {
+                    request.cancel()
+                }
+            }
         }
     }
 
