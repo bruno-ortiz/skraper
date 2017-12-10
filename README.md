@@ -1,5 +1,7 @@
 # Skraper
 
+ [ ![Download](https://api.bintray.com/packages/bruno-ortiz/maven/Skraper/images/download.svg) ](https://bintray.com/bruno-ortiz/maven/Skraper/_latestVersion)
+
 # About
 
 Skraper is a simple crawler written in Kotlin, it is somehow based in Scrapy.
