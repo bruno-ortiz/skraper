@@ -3,6 +3,7 @@ buildscript {
 
     repositories {
         mavenCentral()
+        jcenter()
     }
     dependencies {
         classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
@@ -53,7 +54,7 @@ publish {
     desc = 'Simple crawler written in Kotlin'
     groupId = 'br.com.skraper'
     licences = ['MIT']
-    publishVersion = parent.ext.publish_version
+    publishVersion = project.version
     uploadName = 'Skraper'
     website = 'https://github.com/bruno-ortiz/skraper'
 }

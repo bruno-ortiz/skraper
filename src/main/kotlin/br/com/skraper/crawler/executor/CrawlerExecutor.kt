@@ -2,7 +2,8 @@ package br.com.skraper.crawler.executor
 
 import br.com.skraper.crawler.adapters.Crawler
 import br.com.skraper.crawler.adapters.CrawlerContext
-import br.com.skraper.crawler.adapters.ParseResult
+import br.com.skraper.crawler.adapters.ParseResult.CrawlingItem
+import br.com.skraper.crawler.adapters.ParseResult.NextPage
 import br.com.skraper.requests.asyncResponse
 import com.github.kittinunf.fuel.Fuel
 import kotlinx.coroutines.experimental.CommonPool
@@ -18,7 +19,6 @@ import java.io.Closeable
 import java.net.URL
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
-import kotlin.system.measureTimeMillis
 
 class CrawlerExecutor(
         private val concurrency: Int = 10
@@ -35,27 +35,23 @@ class CrawlerExecutor(
     }
 
     fun start(startURL: String, crawler: Crawler) = runBlocking {
-        val time = measureTimeMillis {
+        val url = URL(startURL)
+        val host = "${url.protocol}://${url.host}"
 
-            val url = URL(startURL)
-            val host = "${url.protocol}://${url.host}"
+        val ctxChannel = Channel<CrawlerContext>(Channel.UNLIMITED)
 
-            val ctxChannel = Channel<CrawlerContext>(Channel.UNLIMITED)
-
-            repeat(concurrency) {
-                processDocument(ctxChannel)
-            }
-
-            val tasks = AtomicInteger(0)
-            ctxChannel.send(CrawlerContext(host, crawler, startURL, tasks))
-
-            while (tasks.get() != 0) {
-                delay(1, TimeUnit.SECONDS)
-            }
-            closeProcessors()
-            ctxChannel.close()
+        repeat(concurrency) {
+            processDocument(ctxChannel)
         }
-        log.info("Crawling ended -> $time")
+
+        val tasks = AtomicInteger(0)
+        ctxChannel.send(CrawlerContext(host, crawler, startURL, tasks))
+
+        while (tasks.get() != 0) {
+            delay(1, TimeUnit.SECONDS)
+        }
+        closeProcessors()
+        ctxChannel.close()
     }
 
     private fun processDocument(ctxChannel: Channel<CrawlerContext>) = launch(CommonPool) {
@@ -70,12 +66,12 @@ class CrawlerExecutor(
 
             for (parseResult in sequence) {
                 when (parseResult) {
-                    is ParseResult.NextPage -> {
+                    is NextPage -> {
                         log.info("Next URL -> ${parseResult.nextURL}")
 
                         ctxChannel.send(ctx.copy(crawler = parseResult.crawler, documentURL = "${ctx.host}${parseResult.nextURL}"))
                     }
-                    is ParseResult.CrawlingItem<*> -> {
+                    is CrawlingItem<*> -> {
                         log.info("result -> $parseResult")
 
                         processors[parseResult.item!!::class.java]?.send(parseResult.item)
