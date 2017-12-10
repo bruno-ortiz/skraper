@@ -1,10 +1,10 @@
 # Skraper
 
-##About
+#About
 
 Skraper is a simple crawler written in Kotlin, it is somehow based in Scrapy.
 
-##Gradle
+#Gradle
  
 Skraper is published through Jcenter. Using Skraper is as simple as:
 
@@ -18,7 +18,7 @@ dependencies {
 }
 ```
 
-##Usage
+#Usage
 
 Using Skraper is really simple, you only need to implement 'Crawler' interface, and user CrawlerExecutor to start crawling.
 
@@ -39,7 +39,7 @@ fun main(args: Array<String>) {
 
 ```
 
-###Queuing new pages
+##Queuing new pages
 
 When parsing a page the parse method returns a sequence generator, that can yield new values of 2 types:
 
@@ -60,7 +60,7 @@ object SimplePageCrawler : Crawler {
 
 When a NextPage is yielded, we must tell which Crawler will be used to parse this page.
 
-##Item processors
+#Item processors
 
 When a CrawlingItem is added to the queue, the executor will try to find a suitable processor to handle that item.
 
@@ -98,7 +98,7 @@ fun someVOProcessor() = actor<SomeVO> {
 ```
 
 
-###TODOS
+#TODOS
 
 * Support JSON crawling
 * Customize the coroutines ThreadPool
