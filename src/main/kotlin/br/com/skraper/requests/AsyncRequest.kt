@@ -6,8 +6,8 @@ import com.github.kittinunf.fuel.core.Response
 import com.github.kittinunf.result.Result
 import kotlinx.coroutines.experimental.suspendCancellableCoroutine
 
-suspend fun Request.asyncResponse(): Triple<Request, Response, Result<ByteArray, FuelError>> = suspendCancellableCoroutine { cont ->
-    response { request, response, result ->
+suspend fun Request.asyncResponse(): Triple<Request, Response, Result<String, FuelError>> = suspendCancellableCoroutine { cont ->
+    responseString { request, response, result ->
         cont.resume(Triple(request, response, result))
         cont.invokeOnCompletion {
             if (cont.isCancelled) {

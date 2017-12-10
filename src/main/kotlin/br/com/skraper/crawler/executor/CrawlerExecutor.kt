@@ -6,6 +6,7 @@ import br.com.skraper.crawler.adapters.ParseResult.CrawlingItem
 import br.com.skraper.crawler.adapters.ParseResult.NextPage
 import br.com.skraper.requests.asyncResponse
 import com.github.kittinunf.fuel.Fuel
+import com.github.kittinunf.result.Result
 import kotlinx.coroutines.experimental.CommonPool
 import kotlinx.coroutines.experimental.channels.ActorJob
 import kotlinx.coroutines.experimental.channels.Channel
@@ -58,26 +59,38 @@ class CrawlerExecutor(
         ctxChannel.consumeAndCloseEach { ctx ->
             log.info("Crawling page with ${ctx.crawler.name}")
 
-            val (_, response, _) = Fuel.get(ctx.documentURL).asyncResponse()
+            val (_, _, result) = Fuel.get(ctx.documentURL).asyncResponse()
 
-            val content = response.data.toString(Charsets.UTF_8)
+            when (result) {
+                is Result.Success -> {
+                    val document = Jsoup.parse(result.value)
 
-            val sequence = ctx.crawler.parse(Jsoup.parse(content))
+                    val sequence = ctx.crawler.parse(document)
 
-            for (parseResult in sequence) {
-                when (parseResult) {
-                    is NextPage -> {
-                        log.info("Next URL -> ${parseResult.nextURL}")
+                    for (parseResult in sequence) {
+                        when (parseResult) {
+                            is NextPage -> {
+                                log.info("Next URL -> ${parseResult.nextURL}")
 
-                        ctxChannel.send(ctx.copy(crawler = parseResult.crawler, documentURL = "${ctx.host}${parseResult.nextURL}"))
-                    }
-                    is CrawlingItem<*> -> {
-                        log.info("result -> $parseResult")
+                                val newContext = ctx.copy(
+                                        crawler = parseResult.crawler,
+                                        documentURL = "${ctx.host}${parseResult.nextURL}"
+                                )
+                                ctxChannel.send(newContext)
+                            }
+                            is CrawlingItem<*> -> {
+                                log.info("result -> $parseResult")
 
-                        processors[parseResult.item!!::class.java]?.send(parseResult.item)
+                                processors[parseResult.item!!::class.java]?.send(parseResult.item)
+                            }
+                        }
                     }
                 }
+                is Result.Failure -> {
+                    ctx.crawler.onError(ctx.documentURL, result.error.response, result.error.exception)
+                }
             }
+
         }
     }
 
