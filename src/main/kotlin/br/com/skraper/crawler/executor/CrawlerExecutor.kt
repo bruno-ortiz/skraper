@@ -65,7 +65,7 @@ class CrawlerExecutor(
                 is Result.Success -> {
                     val document = Jsoup.parse(result.value)
 
-                    val sequence = ctx.crawler.parse(document)
+                    val sequence = ctx.crawler.parse(document, ctx)
 
                     for (parseResult in sequence) {
                         when (parseResult) {

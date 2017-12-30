@@ -6,7 +6,7 @@ import org.jsoup.nodes.Document
 interface Crawler {
     val name: String
 
-    fun parse(doc: Document): Sequence<ParseResult>
+    fun parse(doc: Document, context: CrawlerContext): Sequence<ParseResult>
 
     fun onError(url: String, response: Response, exception: Exception) {
 
