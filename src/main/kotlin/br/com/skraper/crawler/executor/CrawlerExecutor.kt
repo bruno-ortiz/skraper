@@ -49,7 +49,7 @@ class CrawlerExecutor(
         ctxChannel.send(CrawlerContext(host, crawler, startURL, tasks))
 
         while (tasks.get() != 0) {
-            delay(1, TimeUnit.SECONDS)
+            delay(5, TimeUnit.SECONDS)
         }
         closeProcessors()
         ctxChannel.close()
