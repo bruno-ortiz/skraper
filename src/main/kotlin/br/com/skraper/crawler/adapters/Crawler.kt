@@ -14,7 +14,7 @@ interface Crawler {
 
     fun parse(doc: Document, context: CrawlerContext): Sequence<ParseResult>
 
-    fun onError(url: String, response: Response, exception: Exception): ParseResult.NoOp {
+    fun onError(url: String, response: Response, exception: Exception): ParseResult {
         log.error("Request failed for URL $url: ${response.responseMessage}", exception)
 
         return ParseResult.NoOp

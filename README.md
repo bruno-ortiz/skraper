@@ -103,6 +103,5 @@ fun someVOProcessor() = actor<SomeVO> {
 # TODOS
 
 * Support JSON crawling
-* Customize the coroutines ThreadPool
 * Customize http client(add proxy support)
 * Add some delay between downloads
