@@ -2,15 +2,18 @@ package br.com.skraper.crawler.executor
 
 import br.com.skraper.crawler.adapters.Crawler
 import br.com.skraper.crawler.adapters.CrawlerContext
+import br.com.skraper.crawler.adapters.ParseResult
 import br.com.skraper.crawler.adapters.ParseResult.CrawlingItem
 import br.com.skraper.crawler.adapters.ParseResult.NextPage
 import br.com.skraper.requests.asyncResponse
 import com.github.kittinunf.fuel.Fuel
 import com.github.kittinunf.result.Result
 import kotlinx.coroutines.experimental.CommonPool
+import kotlinx.coroutines.experimental.CoroutineDispatcher
 import kotlinx.coroutines.experimental.channels.ActorJob
 import kotlinx.coroutines.experimental.channels.Channel
 import kotlinx.coroutines.experimental.channels.ReceiveChannel
+import kotlinx.coroutines.experimental.channels.SendChannel
 import kotlinx.coroutines.experimental.delay
 import kotlinx.coroutines.experimental.launch
 import kotlinx.coroutines.experimental.runBlocking
@@ -22,11 +25,9 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
 class CrawlerExecutor(
-        private val concurrency: Int = 10
+        private val concurrency: Int = 10,
+        private val dispatcher: CoroutineDispatcher = CommonPool
 ) {
-    companion object {
-        private val log = LoggerFactory.getLogger(CrawlerExecutor::class.java)!!
-    }
 
     private val processors = hashMapOf<Class<*>, ActorJob<Any>>()
 
@@ -49,15 +50,15 @@ class CrawlerExecutor(
         ctxChannel.send(CrawlerContext(host, crawler, startURL, tasks))
 
         while (tasks.get() != 0) {
-            delay(5, TimeUnit.SECONDS)
+            delay(1, TimeUnit.SECONDS)
         }
         closeProcessors()
         ctxChannel.close()
     }
 
-    private fun processDocument(ctxChannel: Channel<CrawlerContext>) = launch(CommonPool) {
+    private fun processDocument(ctxChannel: Channel<CrawlerContext>) = launch(dispatcher) {
         ctxChannel.consumeAndCloseEach { ctx ->
-            log.info("Crawling page with ${ctx.crawler.name}")
+            log.debug("Crawling page with ${ctx.crawler.name}")
 
             val (_, _, result) = Fuel.get(ctx.documentURL).asyncResponse()
 
@@ -68,33 +69,43 @@ class CrawlerExecutor(
                     val sequence = ctx.crawler.parse(document, ctx)
 
                     for (parseResult in sequence) {
-                        when (parseResult) {
-                            is NextPage -> {
-                                log.info("Next URL -> ${parseResult.nextURL}")
-
-                                val newContext = ctx.copy(
-                                        crawler = parseResult.crawler,
-                                        documentURL = "${ctx.host}${parseResult.nextURL}"
-                                )
-                                ctxChannel.send(newContext)
-                            }
-                            is CrawlingItem<*> -> {
-                                log.info("result -> $parseResult")
-
-                                processors[parseResult.item!!::class.java]?.send(parseResult.item)
-                            }
-                        }
+                        process(parseResult, ctx, ctxChannel)
                     }
                 }
                 is Result.Failure -> {
-                    ctx.crawler.onError(ctx.documentURL, result.error.response, result.error.exception)
+                    val errorResult = ctx.crawler.onError(
+                            url = ctx.documentURL,
+                            response = result.error.response,
+                            exception = result.error.exception
+                    )
+
+                    process(errorResult, ctx, ctxChannel)
                 }
             }
 
         }
     }
 
-    private inline suspend fun <T : Closeable> ReceiveChannel<T>.consumeAndCloseEach(action: (T) -> Unit) {
+    private suspend fun process(parseResult: ParseResult, ctx: CrawlerContext, ctxChannel: SendChannel<CrawlerContext>) {
+        when (parseResult) {
+            is NextPage -> {
+                log.debug("Next URL -> ${parseResult.nextURL}")
+
+                val newContext = ctx.copy(
+                        crawler = parseResult.crawler,
+                        documentURL = "${ctx.host}${parseResult.nextURL}"
+                )
+                ctxChannel.send(newContext)
+            }
+            is CrawlingItem<*> -> {
+                log.debug("result -> $parseResult")
+
+                processors[parseResult.item!!::class.java]?.send(parseResult.item)
+            }
+        }
+    }
+
+    private suspend inline fun <T : Closeable> ReceiveChannel<T>.consumeAndCloseEach(action: (T) -> Unit) {
         for (element in this) {
             element.use { action(it) }
         }
@@ -104,9 +115,11 @@ class CrawlerExecutor(
         processors.values.map {
             it.close()
             it
-        }.forEach {
-            it.join()
-        }
+        }.forEach { it.join() }
+    }
+
+    companion object {
+        private val log = LoggerFactory.getLogger(CrawlerExecutor::class.java)!!
     }
 
 }

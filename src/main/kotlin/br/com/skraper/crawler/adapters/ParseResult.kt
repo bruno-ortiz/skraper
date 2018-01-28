@@ -6,4 +6,5 @@ sealed class ParseResult {
 
     class NextPage(val nextURL: String, val crawler: Crawler) : ParseResult()
 
+    object NoOp : ParseResult()
 }
