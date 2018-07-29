@@ -1,5 +1,7 @@
 package br.com.skraper.crawler.adapters
 
+import br.com.skraper.crawler.models.CrawlerContext
+import br.com.skraper.crawler.models.ParseResult
 import com.github.kittinunf.fuel.core.Response
 import org.jsoup.nodes.Document
 import org.slf4j.LoggerFactory

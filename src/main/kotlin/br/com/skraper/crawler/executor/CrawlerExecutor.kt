@@ -1,10 +1,12 @@
 package br.com.skraper.crawler.executor
 
 import br.com.skraper.crawler.adapters.Crawler
-import br.com.skraper.crawler.adapters.CrawlerContext
-import br.com.skraper.crawler.adapters.ParseResult
-import br.com.skraper.crawler.adapters.ParseResult.CrawlingItem
-import br.com.skraper.crawler.adapters.ParseResult.NextPage
+import br.com.skraper.crawler.models.CrawlerContext
+import br.com.skraper.crawler.models.CrawlingResult
+import br.com.skraper.crawler.models.PageError
+import br.com.skraper.crawler.models.ParseResult
+import br.com.skraper.crawler.models.ParseResult.CrawlingItem
+import br.com.skraper.crawler.models.ParseResult.NextPage
 import br.com.skraper.requests.asyncResponse
 import com.github.kittinunf.fuel.Fuel
 import com.github.kittinunf.result.Result
@@ -36,7 +38,7 @@ class CrawlerExecutor(
         processors[clazz] = actorJob as ActorJob<Any>
     }
 
-    fun start(startURL: String, crawler: Crawler) = runBlocking {
+    fun start(startURL: String, crawler: Crawler): CrawlingResult = runBlocking {
         val url = URL(startURL)
         val host = "${url.protocol}://${url.host}"
 
@@ -47,13 +49,21 @@ class CrawlerExecutor(
         }
 
         val tasks = AtomicInteger(0)
-        ctxChannel.send(CrawlerContext(host, crawler, startURL, tasks))
+        val initialContext = CrawlerContext(host, crawler, startURL, tasks)
+        ctxChannel.send(initialContext)
 
         while (tasks.get() != 0) {
             delay(1, TimeUnit.SECONDS)
         }
         closeProcessors()
         ctxChannel.close()
+        with(initialContext) {
+            CrawlingResult(
+                    itemsCrawled = itemsCrawled.get(),
+                    pagesVisited = pagesVisited.get(),
+                    errors = errors
+            )
+        }
     }
 
     private fun processDocument(ctxChannel: Channel<CrawlerContext>) = launch(dispatcher) {
@@ -73,6 +83,8 @@ class CrawlerExecutor(
                     }
                 }
                 is Result.Failure -> {
+                    ctx.errors.add(PageError(ctx.documentURL, result.error.exception))
+
                     val errorResult = ctx.crawler.onError(
                             url = ctx.documentURL,
                             response = result.error.response,
@@ -87,21 +99,25 @@ class CrawlerExecutor(
     }
 
     private suspend fun process(parseResult: ParseResult, ctx: CrawlerContext, ctxChannel: SendChannel<CrawlerContext>) {
-        when (parseResult) {
-            is NextPage -> {
-                log.debug("Next URL -> ${parseResult.nextURL}")
-
-                val newContext = ctx.copy(
-                        crawler = parseResult.crawler,
-                        documentURL = "${ctx.host}${parseResult.nextURL}"
-                )
-                ctxChannel.send(newContext)
+        try {
+            when (parseResult) {
+                is NextPage -> {
+                    log.debug("Next URL -> ${parseResult.nextURL}")
+                    ctx.pagesVisited.incrementAndGet()
+                    val newContext = ctx.copy(
+                            crawler = parseResult.crawler,
+                            documentURL = "${ctx.host}${parseResult.nextURL}"
+                    )
+                    ctxChannel.send(newContext)
+                }
+                is CrawlingItem<*> -> {
+                    log.debug("result -> $parseResult")
+                    ctx.itemsCrawled.incrementAndGet()
+                    processors[parseResult.item!!::class.java]?.send(parseResult.item)
+                }
             }
-            is CrawlingItem<*> -> {
-                log.debug("result -> $parseResult")
-
-                processors[parseResult.item!!::class.java]?.send(parseResult.item)
-            }
+        } catch (t: Throwable) {
+            ctx.errors.add(PageError(ctx.documentURL, t))
         }
     }
 
