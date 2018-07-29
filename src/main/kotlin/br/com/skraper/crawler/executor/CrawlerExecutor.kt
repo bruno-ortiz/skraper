@@ -76,7 +76,7 @@ class CrawlerExecutor(
                 is Result.Success -> {
                     val document = Jsoup.parse(result.value)
 
-                    val sequence = ctx.crawler.parse(document, ctx)
+                    val sequence = tryOn(ctx) { ctx.crawler.parse(document, ctx) } ?: emptySequence()
 
                     for (parseResult in sequence) {
                         process(parseResult, ctx, ctxChannel)
@@ -99,25 +99,21 @@ class CrawlerExecutor(
     }
 
     private suspend fun process(parseResult: ParseResult, ctx: CrawlerContext, ctxChannel: SendChannel<CrawlerContext>) {
-        try {
-            when (parseResult) {
-                is NextPage -> {
-                    log.debug("Next URL -> ${parseResult.nextURL}")
-                    ctx.pagesVisited.incrementAndGet()
-                    val newContext = ctx.copy(
-                            crawler = parseResult.crawler,
-                            documentURL = "${ctx.host}${parseResult.nextURL}"
-                    )
-                    ctxChannel.send(newContext)
-                }
-                is CrawlingItem<*> -> {
-                    log.debug("result -> $parseResult")
-                    ctx.itemsCrawled.incrementAndGet()
-                    processors[parseResult.item!!::class.java]?.send(parseResult.item)
-                }
+        when (parseResult) {
+            is NextPage -> {
+                log.debug("Next URL -> ${parseResult.nextURL}")
+                ctx.pagesVisited.incrementAndGet()
+                val newContext = ctx.copy(
+                        crawler = parseResult.crawler,
+                        documentURL = "${ctx.host}${parseResult.nextURL}"
+                )
+                ctxChannel.send(newContext)
             }
-        } catch (t: Throwable) {
-            ctx.errors.add(PageError(ctx.documentURL, t))
+            is CrawlingItem<*> -> {
+                log.debug("result -> $parseResult")
+                ctx.itemsCrawled.incrementAndGet()
+                tryOn(ctx) { processors[parseResult.item!!::class.java]?.send(parseResult.item) }
+            }
         }
     }
 
@@ -132,6 +128,13 @@ class CrawlerExecutor(
             it.close()
             it
         }.forEach { it.join() }
+    }
+
+    private suspend fun <T> tryOn(ctx: CrawlerContext, func: suspend () -> T) = try {
+        func()
+    } catch (t: Throwable) {
+        ctx.errors.add(PageError(ctx.documentURL, t))
+        null
     }
 
     companion object {
