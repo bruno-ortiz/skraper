@@ -144,6 +144,7 @@ class CrawlerExecutor(
         this.hasNext()
     } catch (e: Exception) {
         ctx.errors.add(PageError(ctx.documentURL, e))
+        this.next()
         this.hasNextValue(ctx)
     }
 
