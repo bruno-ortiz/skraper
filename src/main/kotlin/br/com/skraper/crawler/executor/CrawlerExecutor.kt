@@ -76,9 +76,11 @@ class CrawlerExecutor(
                 is Result.Success -> {
                     val document = Jsoup.parse(result.value)
 
-                    val sequence = tryOn(ctx) { ctx.crawler.parse(document, ctx) } ?: emptySequence()
+                    val sequence = ctx.crawler.parse(document, ctx)
+                    val sequenceIterator = sequence.iterator()
 
-                    for (parseResult in sequence) {
+                    while (sequenceIterator.hasNextValue(ctx)) {
+                        val parseResult = sequenceIterator.next()
                         process(parseResult, ctx, ctxChannel)
                     }
                 }
@@ -135,6 +137,14 @@ class CrawlerExecutor(
     } catch (t: Throwable) {
         ctx.errors.add(PageError(ctx.documentURL, t))
         null
+    }
+
+
+    private fun <T> Iterator<T>.hasNextValue(ctx: CrawlerContext): Boolean = try {
+        this.hasNext()
+    } catch (e: Exception) {
+        ctx.errors.add(PageError(ctx.documentURL, e))
+        this.hasNextValue(ctx)
     }
 
     companion object {
