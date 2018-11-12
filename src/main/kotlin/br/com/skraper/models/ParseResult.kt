@@ -1,6 +1,6 @@
-package br.com.skraper.crawler.models
+package br.com.skraper.models
 
-import br.com.skraper.crawler.adapters.Crawler
+import br.com.skraper.adapters.Crawler
 
 sealed class ParseResult {
 

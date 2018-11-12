@@ -1,4 +1,4 @@
-package br.com.skraper.crawler.models
+package br.com.skraper.models
 
 data class CrawlingResult(
         val pagesVisited: Long,
