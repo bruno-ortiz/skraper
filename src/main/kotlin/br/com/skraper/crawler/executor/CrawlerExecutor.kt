@@ -7,45 +7,47 @@ import br.com.skraper.crawler.models.PageError
 import br.com.skraper.crawler.models.ParseResult
 import br.com.skraper.crawler.models.ParseResult.CrawlingItem
 import br.com.skraper.crawler.models.ParseResult.NextPage
-import br.com.skraper.requests.asyncResponse
 import com.github.kittinunf.fuel.Fuel
+import com.github.kittinunf.fuel.coroutines.awaitStringResponseResult
 import com.github.kittinunf.result.Result
-import kotlinx.coroutines.experimental.CommonPool
-import kotlinx.coroutines.experimental.CoroutineDispatcher
-import kotlinx.coroutines.experimental.channels.ActorJob
-import kotlinx.coroutines.experimental.channels.Channel
-import kotlinx.coroutines.experimental.channels.ReceiveChannel
-import kotlinx.coroutines.experimental.channels.SendChannel
-import kotlinx.coroutines.experimental.delay
-import kotlinx.coroutines.experimental.launch
-import kotlinx.coroutines.experimental.runBlocking
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.ReceiveChannel
+import kotlinx.coroutines.channels.SendChannel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.launch
 import org.jsoup.Jsoup
 import org.slf4j.LoggerFactory
 import java.io.Closeable
 import java.net.URL
-import java.util.concurrent.TimeUnit
+import java.time.Duration
 import java.util.concurrent.atomic.AtomicInteger
+import kotlin.coroutines.CoroutineContext
 
 class CrawlerExecutor(
-        private val concurrency: Int = 10,
-        private val dispatcher: CoroutineDispatcher = CommonPool
+    private val concurrency: Int = 1,
+    private val dispatcher: CoroutineContext = Dispatchers.Default,
 ) {
 
-    private val processors = hashMapOf<Class<*>, ActorJob<Any>>()
+    private val processors = hashMapOf<Class<*>, SendChannel<Any>>()
 
     @Suppress("UNCHECKED_CAST")
-    fun <T> registerProcessor(clazz: Class<T>, actorJob: ActorJob<T>) {
-        processors[clazz] = actorJob as ActorJob<Any>
+    fun <T> registerProcessor(clazz: Class<T>, actorJob: SendChannel<T>) {
+        processors[clazz] = actorJob as SendChannel<Any>
     }
 
-    fun start(startURL: String, crawler: Crawler): CrawlingResult = runBlocking {
+    suspend fun start(startURL: String, crawler: Crawler): CrawlingResult = coroutineScope {
         val url = URL(startURL)
         val host = "${url.protocol}://${url.host}"
 
         val ctxChannel = Channel<CrawlerContext>(Channel.UNLIMITED)
 
         repeat(concurrency) {
-            processDocument(ctxChannel)
+            launch(dispatcher) {
+                processDocument(ctxChannel)
+            }
         }
 
         val tasks = AtomicInteger(0)
@@ -53,33 +55,33 @@ class CrawlerExecutor(
         ctxChannel.send(initialContext)
 
         while (tasks.get() != 0) {
-            delay(1, TimeUnit.SECONDS)
+            delay(Duration.ofSeconds(1).toMillis())
         }
         closeProcessors()
         ctxChannel.close()
         with(initialContext) {
             CrawlingResult(
-                    itemsCrawled = itemsCrawled.get(),
-                    pagesVisited = pagesVisited.get(),
-                    errors = errors
+                itemsCrawled = itemsCrawled.get(),
+                pagesVisited = pagesVisited.get(),
+                errors = errors
             )
         }
     }
 
-    private fun processDocument(ctxChannel: Channel<CrawlerContext>) = launch(dispatcher) {
+    private suspend fun processDocument(ctxChannel: Channel<CrawlerContext>) {
         ctxChannel.consumeAndCloseEach { ctx ->
             log.debug("Crawling page with ${ctx.crawler.name}")
 
-            val (_, _, result) = Fuel.get(ctx.documentURL).asyncResponse()
+            val (_, _, result) = Fuel.get(ctx.documentURL).awaitStringResponseResult()
 
             when (result) {
                 is Result.Success -> {
                     val document = Jsoup.parse(result.value)
 
-                    val sequence = ctx.crawler.parse(document, ctx)
+                    val flow = ctx.crawler.parse(document, ctx)
 
                     tryOn(ctx) {
-                        for (parseResult in sequence) {
+                        flow.collect { parseResult ->
                             process(parseResult, ctx, ctxChannel)
                         }
                     }
@@ -88,9 +90,9 @@ class CrawlerExecutor(
                     ctx.errors.add(PageError(ctx.documentURL, result.error.exception))
 
                     val errorResult = ctx.crawler.onError(
-                            url = ctx.documentURL,
-                            response = result.error.response,
-                            exception = result.error.exception
+                        url = ctx.documentURL,
+                        response = result.error.response,
+                        exception = result.error.exception
                     )
 
                     process(errorResult, ctx, ctxChannel)
@@ -100,14 +102,18 @@ class CrawlerExecutor(
         }
     }
 
-    private suspend fun process(parseResult: ParseResult, ctx: CrawlerContext, ctxChannel: SendChannel<CrawlerContext>) {
+    private suspend fun process(
+        parseResult: ParseResult,
+        ctx: CrawlerContext,
+        ctxChannel: SendChannel<CrawlerContext>,
+    ) {
         when (parseResult) {
             is NextPage -> {
                 log.debug("Next URL -> ${parseResult.nextURL}")
                 ctx.pagesVisited.incrementAndGet()
                 val newContext = ctx.copy(
-                        crawler = parseResult.crawler,
-                        documentURL = "${ctx.host}${parseResult.nextURL}"
+                    crawler = parseResult.crawler,
+                    documentURL = "${ctx.host}${parseResult.nextURL}"
                 )
                 ctxChannel.send(newContext)
             }
@@ -116,6 +122,7 @@ class CrawlerExecutor(
                 ctx.itemsCrawled.incrementAndGet()
                 tryOn(ctx) { processors[parseResult.item!!::class.java]?.send(parseResult.item) }
             }
+            ParseResult.NoOp -> Unit
         }
     }
 
@@ -125,11 +132,10 @@ class CrawlerExecutor(
         }
     }
 
-    private suspend fun closeProcessors() {
-        processors.values.map {
+    private fun closeProcessors() {
+        processors.values.forEach {
             it.close()
-            it
-        }.forEach { it.join() }
+        }
     }
 
     private suspend fun <T> tryOn(ctx: CrawlerContext, func: suspend () -> T) = try {
